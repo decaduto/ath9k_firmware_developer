@@ -3,6 +3,9 @@
 		2021-2022 Edoardo Mantovani All Rights Reserved
 */
 
+#ifdef __ELF__
+    #pragma message("The output executable format is an ELF")
+
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,6 +20,10 @@
 #include <sys/uio.h>
 #include <sys/mman.h>
 #include <libusb-1.0/libusb.h>
+
+#ifdef __thread
+    #pragma message("__thread only allocation is available!")
+#endif
 
 #define FIRMWARE_DOWNLOAD       0x30
 #define FIRMWARE_DOWNLOAD_COMP  0x31
@@ -66,6 +73,13 @@ enum{
 	DEV_CAN_MONITOR_MODE,
 	DEV_CAN_2GHZ,
 	DEV_CAN_5GHZ,
+    DEV_CAN_INJECT,
+    DEV_CAN_SUPPORT_WPA,
+    DEV_CAN_SUPPORT_WPA2,
+    DEV_CAN_SUPPORT_WPA3,
+    DEV_IS_80211N,
+    DEV_IS_80211AC,
+    DEV_IS_80211AX,
 };
 
 enum dev_bus{
@@ -118,30 +132,43 @@ static struct global_address_space_info{
 	.source_section_address    = 0x00,
 };
 
-struct {
+__thread struct{
 	void (*upload_firmware)(struct libusb_device_handle *, const void *, size_t);
 	void (*init_device)();
 	void (*shtd_device)();
 	void (*send_device)();
-	void (*eject_device)();
+    void (*reboot_device)(struct libusb_device_handle *);
+	void (*eject_device)(struct libusb_device_handle *);
 	void (*add_plugin)();
 	void (*delete_plugin)();
 	void (*manage_plugin_list)();
 	void (*activate_plugin)();
-}__attribute__((__section__(".ath9u_ops, \" A \""))) __attribute__((aligned(1))) ath9u_ops = {
+    int  (*plugin_callback1)();
+    int  (*plugin_callback2)();
+    int  (*plugin_callback3)();
+}ath9u_ops __attribute__((__section__(".ath9u_ops, \" a \""))) = {
 	.upload_firmware    = ddv_upload_fw,
 	.init_device        = ,
 	.shtd_device        = ,
 	.send_device        = ,
 	.eject_device       = ddv_eject_device,
+    .reboot_device      = ddv_reboot_device,
 	.add_plugin         = ,
 	.delete_plugin      = ,
 	.manage_plugin_list = ,
 	.activate_plugin    = ,
+    .plugin_callback1   = NULL,
+    .plugin_callback2   = NULL,
+    .plugin_callback3   = NULL,
 };
 
 __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_info *info, size_t size, void *data){
+    /* get the ELF header for gathering the e_entry information */
+    Elf64_Ehdr *athu_main_header = (Elf64_Ehdr *)dlpi_addr;
+    for(int i = 0; i < info->dlpi_phnum; i++){
+        if( dlpi_phdr[i].p_flags /* TODO: manipulation of the phdrs */ )
 
+    }
 
 
 }
@@ -152,8 +179,8 @@ __attribute__((__section__(".boot, \" xaw \", @progbits#"))) __attribute__((cons
 
 
     /* discover the VID and the PID */
-    unsigned int ath9u_vid = 0x00;
-    unsigned int ath9u_pid = 0x00;
+    unsigned int ath9u_vid = ;
+    unsigned int ath9u_pid = ;
 	/* create libusb context and populate the general 802.11 struct */
     unsigned char ath9u_device_descriptor[ATH9U_DESCRIPTOR_SIZE];
     memset(ath9u_device_descriptor, 0x00, ATH9U_DESCRIPTOR_SIZE);
@@ -181,11 +208,14 @@ __attribute__((__section__(".boot, \" xaw \", @progbits#"))) __attribute__((cons
     /* gather additional data on the USB device attached */
     struct libusb_bos_descriptor  *ath9u_configuration_descriptor = (struct libusb_bos_descriptor  *)malloc(sizeof(ath9u_configuration_descriptor));
     libusb_get_bos_descriptor(ath9u_device, &ath9u_configuration_descriptor);
-    global_device_informations. = ath9u_configuration_descriptor-> ;
-    global_device_informations. = ath9u_configuration_descriptor-> ;
-    global_device_informations. = ath9u_configuration_descriptor-> ;
-    global_device_informations. = ath9u_configuration_descriptor-> ;
-    global_device_informations. = ath9u_configuration_descriptor-> ;
+    /*
+    global_device_informations.device_capabilities[0]->bDescriptorType = ath9u_configuration_descriptor-> ;
+    global_device_informations.device_capabilities[0]->bDevCapabilityType = ath9u_configuration_descriptor-> ;
+    global_device_informations.device_capabilities[0]-> = ath9u_configuration_descriptor-> ;
+    global_device_informations.device_capabilities[0]-> = ath9u_configuration_descriptor-> ;
+    global_device_informations.device_capabilities[0]-> = ath9u_configuration_descriptor-> ;
+    */
+
     /* use the specific function for freeing, instead of the classic 'free' */
     libusb_free_bos_descriptor(ath9u_configuration_descriptor);
 }
@@ -250,7 +280,7 @@ void ddv_eject_device(struct libusb_device_handle *ath9u_usb){
 	ath9u_bulk_cmd[3]  = 0x43;	/* bulk command signature */
 	ath9u_bulk_cmd[14] = 0x06;	/* command length */
 	ath9u_bulk_cmd[15] = 0x1b;	/* SCSI command: START STOP UNIT */
-	ath9u_bulk_cmd[19] = 0x2;	/* eject disc */
+	ath9u_bulk_cmd[19] = 0x02;	/* eject disc */
 
 	/*
 		usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
@@ -260,9 +290,31 @@ void ddv_eject_device(struct libusb_device_handle *ath9u_usb){
 	free(ath9u_bulk_cmd);
 }
 
+/* 
+If firmware was loaded we should drop it
+	 * go back to first stage bootloader. 
+*/
+
+void ddv_reboot_device(struct libusb_device_handle *ath9u_device){
+    #define ATH9U_REBOOT_CMD 0xffffffff
+	void *reboot_buf;
+    memcpy(reboot_buf, ATH9U_REBOOT_CMD, 4);
+    if( libusb_control_transfer(ath9u_device, buf, 4, NULL, USB_MSG_TIMEOUT) < 0 ){
+        exit(-LIBUSB_CONTROL_FAIL);
+    }
+
+}
+
+long ath9u_get_device_capabilities(void){
+	return( DEV_CAN_TX | DEV_CAN_RX | DEV_CAN_STA_MODE | DEV_CAN_AP_MODE | DEV_CAN_MONITOR_MODE |
+            DEV_CAN_2GHZ | DEV_CAN_5GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N );
+
+}
 
 int main(int argc, char *argv[]){
 
 
 	return 0;
 }
+
+#endif
