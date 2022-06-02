@@ -1,3 +1,4 @@
+
 /*
 	Made by Edoardo Mantovani, aka Bpl
 		2021-2022 Edoardo Mantovani All Rights Reserved
@@ -15,6 +16,8 @@
 #include <pthread.h>
 #include <link.h>
 #include <stdbool.h>
+#include <dialog.h>
+#include <ncurses.h>
 
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -37,7 +40,7 @@
 
 #ifndef min
 	size_t min(size_t a, size_t b){
-		return( a > b)  ? b : a;
+		return( a > b )  ? b : a;
 	}
 #endif
 
@@ -45,13 +48,20 @@
     #define ATH9U_DESCRIPTOR_SIZE 128
 #endif
 
+/* this will be very important later, is going to be updated by playing with the section size */
+static int chip_firmware_size = 0;
+static int out_endpoint = 0;
+
 /* function prototypes */
 void ddv_upload_fw(struct libusb_device_handle *, const void *, size_t);
+signed int ddv_send_management_frame(struct libusb_device_handle *, const void *);
 void ddv_eject_device(struct libusb_device_handle *);
+signed int ddv_reboot_device(struct libusb_device_handle *);
 
 enum ddv_errors{
 	/* misc related errors */
 	NO_CORRECT_PARAMS = 1,
+	NO_CORRECT_ENDPOINT,
 	/* LIBUSB related errors */
 	LIBUSB_INIT_FAIL = 7,
 	LIBUSB_VID_PID_FAIL,
@@ -137,7 +147,7 @@ __thread struct{
 	void (*init_device)();
 	void (*shtd_device)();
 	void (*send_device)();
-    	void (*reboot_device)(struct libusb_device_handle *);
+    	signed int (*reboot_device)(struct libusb_device_handle *);
 	void (*eject_device)(struct libusb_device_handle *);
 	void (*add_plugin)();
 	void (*delete_plugin)();
@@ -146,17 +156,19 @@ __thread struct{
     	int  (*plugin_callback1)();
     	int  (*plugin_callback2)();
     	int  (*plugin_callback3)();
-}ath9u_ops __attribute__((__section__(".ath9u_ops, \" a \""))) = {
+}ath9u_ops __attribute__((__section__(".ath9u_ops, \"xaw\", @progbits# "))) = {
 	.upload_firmware    = ddv_upload_fw,
-	.init_device        = ,
+/*	.init_device        = ,
 	.shtd_device        = ,
 	.send_device        = ,
+*/
 	.eject_device       = ddv_eject_device,
     	.reboot_device      = ddv_reboot_device,
-	.add_plugin         = ,
+/*	.add_plugin         = ,
 	.delete_plugin      = ,
 	.manage_plugin_list = ,
 	.activate_plugin    = ,
+*/
     	.plugin_callback1   = NULL,
    	.plugin_callback2   = NULL,
     	.plugin_callback3   = NULL,
@@ -164,23 +176,23 @@ __thread struct{
 
 __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_info *info, size_t size, void *data){
     /* get the ELF header for gathering the e_entry information */
-    Elf64_Ehdr *athu_main_header = (Elf64_Ehdr *)dlpi_addr;
+    Elf64_Ehdr *athu_main_header = (Elf64_Ehdr *)info->dlpi_addr;
     for(int i = 0; i < info->dlpi_phnum; i++){
-        if( dlpi_phdr[i].p_flags /* TODO: manipulation of the phdrs */ )
+        //if( dlpi_phdr[i].p_flags /* TODO: manipulation of the phdrs */ )
 
-    }
-
+    //}
+	}
 
 }
 
-__attribute__((__section__(".boot, \" xaw \", @progbits#"))) __attribute__((constructor(101))) void init(void){
+__attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constructor(101))) void init(void){
 	/* start the discover function, which will populate the 'global_address_space_info' struct with the appropriate addresses */
 	dl_iterate_phdr(ath9u_discover_address_space, NULL);
 
 
     	/* discover the VID and the PID */
-    	unsigned int ath9u_vid = ;
-    	unsigned int ath9u_pid = ;
+    	unsigned int ath9u_vid = 0x0cf3;
+    	unsigned int ath9u_pid = 0x9271;
 	/* create libusb context and populate the general 802.11 struct */
 	unsigned char ath9u_device_descriptor[ATH9U_DESCRIPTOR_SIZE];
     	memset(ath9u_device_descriptor, 0x00, ATH9U_DESCRIPTOR_SIZE);
@@ -218,6 +230,37 @@ __attribute__((__section__(".boot, \" xaw \", @progbits#"))) __attribute__((cons
 
     	/* use the specific function for freeing, instead of the classic 'free' */
     	libusb_free_bos_descriptor(ath9u_configuration_descriptor);
+	/* discover the endpoint, which will be used for every USB bulk/interrupt/control exchange */
+	out_endpoint = 0x1;
+	/* init the dialog API */
+	init_dialog(stdin, stdout);
+}
+
+__attribute__((destructor())) void end(void){
+	end_dialog(); /* terminate the dialog API */
+
+}
+
+signed int ddv_send_management_frame(struct libusb_device_handle *ath9u_usb_handler, const void *tx_frame){
+	if( ! ( ath9u_usb_handler ) || sizeof(tx_frame) == 0 ){
+		return -1;
+	}
+
+	//libusb_bulk_transfer();
+}
+
+signed int ar9271_firmware_transfer(int sent_blocks){
+  /* this function will be called only if a) TUI option is enabled b) a firmware update is going to be flashed to the AR9271 */
+  if( sent_blocks == 0 || chip_firmware_size == 0 ){ /* control that the firmware size is != 0 */
+        return -1;
+  }
+  void *gauge_obj = dlg_allocate_gauge("sending the firmware to the AR9271", NULL, 7, 70, 0);
+  for(int i = 0; i <= chip_firmware_size; i += sent_blocks){
+        dlg_update_gauge(gauge_obj, i);
+        usleep(USB_MSG_TIMEOUT); /* sync the graphical progresses with the USB URB sending time */
+  }
+  dlg_free_gauge(gauge_obj);
+  return 1;
 }
 
 
@@ -286,27 +329,34 @@ void ddv_eject_device(struct libusb_device_handle *ath9u_usb){
 		usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
 			     cmd, 31, NULL, 2 * USB_MSG_TIMEOUT);
 	*/
-	libusb_bulk_transfer(ath9u_usb, );
+	libusb_bulk_transfer(ath9u_usb, out_endpoint, ath9u_bulk_cmd, sizeof(ath9u_bulk_cmd), 0, USB_MSG_TIMEOUT);
 	free(ath9u_bulk_cmd);
 }
 
-/* 
+/*
 If firmware was loaded we should drop it
-	 * go back to first stage bootloader. 
+	 * go back to first stage bootloader.
 */
 
-void ddv_reboot_device(struct libusb_device_handle *ath9u_device){
-    	#define ATH9U_REBOOT_CMD 0xffffffff
+signed int ddv_reboot_device(struct libusb_device_handle *ath9u_device){
+	if( out_endpoint == 0x00 ){
+		return -NO_CORRECT_ENDPOINT;
+	}
+	#ifdef ATH9K_REBOOT_CMD
+		#define ATH9U_REBOOT_CMD	ATH9K_REBOOT_CMD
+	#else
+    		#define ATH9U_REBOOT_CMD	0xffffffff
+	#endif
 	void *reboot_buf;
-    	memcpy(reboot_buf, ATH9U_REBOOT_CMD, 4);
-    	if( libusb_control_transfer(ath9u_device, buf, 4, NULL, USB_MSG_TIMEOUT) < 0 ){
+    	memcpy(reboot_buf, (void *)ATH9U_REBOOT_CMD, 4);
+    	if( libusb_interrupt_transfer(ath9u_device, out_endpoint, reboot_buf, 4, NULL, USB_MSG_TIMEOUT) < 0 ){
         	exit(-LIBUSB_CONTROL_FAIL);
     	}
 }
 
 long ath9u_get_device_capabilities(void){
 	return( DEV_CAN_TX | DEV_CAN_RX | DEV_CAN_STA_MODE | DEV_CAN_AP_MODE | DEV_CAN_MONITOR_MODE |
-            DEV_CAN_2GHZ | DEV_CAN_5GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N );
+            DEV_CAN_2GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N );
 
 }
 
