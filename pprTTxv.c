@@ -44,7 +44,6 @@
 	#define USB_DIR_OUT	0
 #endif
 
-
 #ifndef min
 	size_t min(size_t a, size_t b){
 		return( a > b )  ? b : a;
@@ -58,6 +57,9 @@
 /* this will be very important later, is going to be updated by playing with the section size */
 static int chip_firmware_size = 0;
 static int out_endpoint = 0;
+
+extern unsigned char _binary_ath9u_fw_htc_9271_fw_start;
+extern unsigned char _binary_ath9u_fw_htc_9271_fw_end;
 
 /* function prototypes */
 void ddv_upload_fw(struct libusb_device_handle *, const void *, size_t);
@@ -143,7 +145,7 @@ static struct global_address_space_info{
 	uint32_t boot_segment_vaddr;
 	uint32_t boot_segment_memsz;
 	uint32_t ath9u_ops_segment_vaddr;
-	uint32_t athu9u_ops_segment_memsz;
+	uint32_t ath9u_ops_segment_memsz;
 	uint32_t compiler_segment_vaddr;
 	uint32_t compiler_segment_memsz;
 	uint32_t source_segment_vaddr;
@@ -154,7 +156,7 @@ static struct global_address_space_info{
 	.boot_segment_vaddr = 0x00,
 	.boot_segment_memsz = 0x00,
 	.ath9u_ops_segment_vaddr = 0x00,
-	.athu9u_ops_segment_memsz = 0x00,
+	.ath9u_ops_segment_memsz = 0x00,
 	.compiler_segment_vaddr = 0x00,
 	.compiler_segment_memsz = 0x00,
 	.source_segment_vaddr = 0x00,
@@ -174,7 +176,7 @@ static struct global_address_space_info{
 #define INITIALIZE_PLUGIN_CB(callback_number)	{	\
 }
 
-__thread struct{
+struct{
 	void (*upload_firmware)(struct libusb_device_handle *, const void *, size_t);
 	void (*init_device)();
 	void (*shtd_device)();
@@ -211,15 +213,32 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 	/* get the ELF header for gathering the e_entry information */
 	Elf64_Ehdr *athu_main_header = (Elf64_Ehdr *)info->dlpi_addr;
 	uint32_t entry_point = info->dlpi_addr + athu_main_header->e_entry;
-	for(int i = 0; i < info->dlpi_phnum; i++){
-		printf("segment start: 0x%x segment end: 0x%x segment size: %d segment flag: 0x%x\n",
-			info[i].dlpi_phdr->p_vaddr,
-			info[i].dlpi_phdr->p_vaddr + info[i].dlpi_phdr->p_memsz,
-			info[i].dlpi_phdr->p_memsz,
-			info[i].dlpi_phdr->p_flags
-		);
-	}
+	unsigned char *tmp_var = malloc(8);
+	unsigned char * firmware_offset_start = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_start;
+	unsigned char * firmware_offset_end   = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_end;
+        snprintf(tmp_var, 8, "%d", (firmware_offset_end - firmware_offset_start));
+        int firmware_size = atoi(tmp_var);
 
+	printf("ath9k firmware offset start: 0x%x firmware offset end: 0x%x firmware size: %d\n",
+		firmware_offset_start,
+		firmware_offset_end,
+		firmware_size
+	);
+	free(tmp_var);
+	unsigned char *ath9u_mmap = mmap(NULL, firmware_size, ( PROT_READ | PROT_WRITE ), ( MAP_PRIVATE | MAP_ANON ), -1, 0);
+	memcpy(ath9u_mmap, firmware_offset_start, firmware_size);
+	//for(int i = 0; i < info->dlpi_phnum; i++){
+		//printf("segment start: 0x%x segment end: 0x%x\n", /* segment size: %d segment flag: %d\n", */
+		//	( info->dlpi_addr + info[i].dlpi_phdr->p_vaddr),
+		//	( info->dlpi_addr + ( info[i].dlpi_phdr->p_vaddr + info[i].dlpi_phdr->p_memsz ) )
+			/*info[i].dlpi_phdr->p_memsz,
+			info[i].dlpi_phdr->p_flags */
+		//);
+	//}
+
+
+	munmap(ath9u_mmap, firmware_size);
+	return 0;
 }
 
 __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constructor(101))) void init(void){
@@ -397,7 +416,7 @@ long ath9u_get_device_capabilities(void){
 
 int main(int argc, char *argv[]){
         /* init the dialog API */
-        init_dialog(stdin, stdout);
+        //init_dialog(stdin, stdout);
 
 
 	return 0;
