@@ -369,11 +369,13 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	if( ! ( ath9u_device ) ){
 		if( ath9u_temp_state() == 0 ){
 			libusb_exit(NULL);
+            ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "VID/PID usb device has not been found!");
 			exit(-LIBUSB_VID_PID_FAIL);
 		}
 	}
     	if( libusb_get_string_descriptor_ascii(ath9u_device, 0, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE) < 0 ){
         	libusb_exit(NULL);
+            ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "USB device descriptor has not been found!");
         	exit(-LIBUSB_DESCRIPTOR_FAIL);
     	}
     	if( ! ( ath9u_device_descriptor ) ){
@@ -439,14 +441,15 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 	usb_control_msg(hif_dev->udev,  usb_sndctrlpipe(hif_dev->udev, 0),  FIRMWARE_DOWNLOAD,
 		(0x40 | USB_DIR_OUT), addr >> 8, 0, buf, transfer,  USB_MSG_TIMEOUT);
 	*/
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Sending the firmware data block");
 	while(fw_len){
 		size_t data_length = min(4096, fw_len);
 		memcpy(data, fw_data, data_length);
 		err = libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD, addr >> 8, 0, data, data_length, USB_MSG_TIMEOUT);
-
 		if( err < 0 ){
 			libusb_exit(NULL);
-			exit(LIBUSB_CONTROL_FAIL);
+			ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Problem with the firmware transfer, this may be critical");
+			exit(-LIBUSB_CONTROL_FAIL);
 		}
 		fw_len  -= data_length;
 		fw_data += data_length;
@@ -465,6 +468,7 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 	#ifndef AR9271_FIRMWARE_TEXT
 		#define AR9271_FIRMWARE_TEXT  0x903000
 	#endif
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Sending the USB control message for ending the firmware exchange");
 	libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD_COMP, AR9271_FIRMWARE_TEXT >> 8, 0, NULL, 0, USB_MSG_TIMEOUT);
 }
 
@@ -492,6 +496,7 @@ void ddv_eject_device(struct libusb_device_handle *ath9u_usb){
 		usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
 			     cmd, 31, NULL, 2 * USB_MSG_TIMEOUT);
 	*/
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Sending the SCSI command to the device");
 	libusb_bulk_transfer(ath9u_usb, out_endpoint, ath9u_bulk_cmd, sizeof(ath9u_bulk_cmd), 0, 2 * USB_MSG_TIMEOUT);
 	free(ath9u_bulk_cmd);
 }
@@ -513,7 +518,8 @@ signed int ddv_reboot_device(struct libusb_device_handle *ath9u_device){
 	void *reboot_buf = malloc(sizeof(0xffffffff));
     	memcpy(reboot_buf, (void *)ATH9U_REBOOT_CMD, 4);
     	if( libusb_interrupt_transfer(ath9u_device, out_endpoint, reboot_buf, 4, NULL, USB_MSG_TIMEOUT) < 0 ){
-        	exit(-LIBUSB_CONTROL_FAIL);
+        	ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Problem with the device reboot, may be some critical error");
+		exit(-LIBUSB_CONTROL_FAIL);
     	}
 	free(reboot_buf);
 }
