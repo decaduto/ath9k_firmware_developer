@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <elf.h>
+#include <time.h>
 #include <pthread.h>
 #include <link.h>
 #include <stdbool.h>
@@ -187,7 +188,6 @@ struct{
 	void (*delete_plugin)();
 	void (*manage_plugin_list)();
 	void (*activate_plugin)();
-	#pragma message("plugin_callback number is: %d" GENERATE_PLUGIN_CB_N)
     	int  (*plugin_callback1)();
     	int  (*plugin_callback2)();
     	int  (*plugin_callback3)();
@@ -209,11 +209,105 @@ struct{
     	.plugin_callback3   = NULL,
 };
 
+/* MODEL THE LOG SUBSYSTEM */
+#define ATH9U_LOG(level, message) sys_do_ath9u_log(ath9u_data, level, message)
+
+enum ath9u_log_subsys_error{
+	FAILED_INITIALIZATION = 5,
+};
+
+enum ath9u_log_subsys_level{
+	ATH9U_LOG_MESSAGE_NORMAL = 1,
+	ATH9U_LOG_MESSAGE_DEBUG,
+	ATH9U_LOG_MESSAGE_WARNING,
+	ATH9U_LOG_MESSAGE_CRITICAL,
+	ATH9U_LOG_MESSAGE_COMPROMISED,
+	ATH9U_LOG_MESSAGE_DYING,
+};
+
+static struct ath9u_data_log{
+	unsigned char *ath9u_mapping_log;
+	unsigned char  ath9u_log_buffer[512];
+}ath9u_data = {
+	.ath9u_mapping_log = NULL,
+};
+
+static struct ath9u_data_log sys_ath9u_log_init(void){
+	/* set up a char buffer which will be resident at a specific area in the process layout memory */
+	unsigned char *ath9u_mapped_logs = NULL;
+	#ifndef MAX_ATH9U_LOG_SIZE
+		#define MAX_ATH9U_LOG_SIZE 512
+	#endif
+	/* note that 128 is an extra safe space used for avoided possible BoF */
+	if( ( ath9u_mapped_logs = mmap((void *)0x50000, MAX_ATH9U_LOG_SIZE + 128, ( PROT_READ | PROT_WRITE ), ( MAP_SHARED | MAP_ANON ), -1, 0) ) < 0 ){
+		exit(-FAILED_INITIALIZATION);
+	}else{
+		struct ath9u_data_log logs;
+		logs.ath9u_mapping_log = ath9u_mapped_logs;
+		return logs;
+		/* do nothing, everything is OK! */
+	}
+}
+
+static void sys_ath9u_log_exit(struct ath9u_data_log logs){
+	/* check for security if the log buffer is empty or not */
+	if( sizeof(logs.ath9u_log_buffer) != 0 && logs.ath9u_log_buffer[3] != '0' ){
+		memset(logs.ath9u_log_buffer, 0x00, sizeof(logs.ath9u_log_buffer));
+	}
+	/* unmap the memory area allocated by the init function */
+	if( !! ( logs.ath9u_mapping_log ) ){
+		munmap(logs.ath9u_mapping_log, 512);
+	}else{
+		/* do nothing, this may lead to some unsafe and unprevedible behaviours */
+	}
+}
+
+static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_level level, unsigned char *message){
+	if( strlen(message) == 0 ){
+		printf("we have a problem with message!\n");
+	}
+	/* compose the string to put in the buffer */
+	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
+	time_t t = time(NULL);
+	struct tm tm = *localtime(&t); /* not happy at all: everytime we invoke this function, the 'time' function will be called again and again... */
+	switch(level){
+		case  ATH9U_LOG_MESSAGE_NORMAL:
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[N] %d: %s", tm.tm_sec, message);
+			break;
+		case ATH9U_LOG_MESSAGE_DEBUG:
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[D] %d: %s\n", tm.tm_sec, message);
+			break;
+		case ATH9U_LOG_MESSAGE_WARNING:
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[W] %d: %s\n", tm.tm_sec, message);
+			break;
+		case ATH9U_LOG_MESSAGE_CRITICAL:
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[C] %d: %s\n", tm.tm_sec, message);
+                        break;
+		case ATH9U_LOG_MESSAGE_COMPROMISED:
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[CC] %d: %s\n", tm.tm_sec, message);
+                        break;
+		case ATH9U_LOG_MESSAGE_DYING:
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[DY] %d: %s\n", tm.tm_sec, message);
+                        break;
+		default:
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[U] %d: %s\n", tm.tm_sec, message);
+			break;
+	}
+	memmove(log.ath9u_mapping_log, log.ath9u_log_buffer, sizeof(log.ath9u_mapping_log));
+	/* do the actual printing */
+	printf("%s", log.ath9u_mapping_log);
+	/* refresh the buffer, the message will be located in the memory mapped for a limited time */
+	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
+}
+
+
+/* END OF THE LOG SUBSYSTEM */
+
 __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_info *info, size_t size, void *data){
 	/* get the ELF header for gathering the e_entry information */
 	Elf64_Ehdr *athu_main_header = (Elf64_Ehdr *)info->dlpi_addr;
 	uint32_t entry_point = info->dlpi_addr + athu_main_header->e_entry;
-	unsigned char *tmp_var = malloc(8);
+	unsigned char *tmp_var = (unsigned char *)malloc(8);
 	unsigned char * firmware_offset_start = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_start;
 	unsigned char * firmware_offset_end   = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_end;
         snprintf(tmp_var, 8, "%d", (firmware_offset_end - firmware_offset_start));
@@ -241,17 +335,27 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 	return 0;
 }
 
+
+signed int ath9u_temp_state(void){
+	/* if the USB dongle has not been detected, initialize the dialog subsystem and ask for 'offline' activities */
+	return 1;
+}
+
 __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constructor(101))) void init(void){
 	/* start the discover function, which will populate the 'global_address_space_info' struct with the appropriate addresses */
 	dl_iterate_phdr(ath9u_discover_address_space, NULL);
 
 
-    	/* discover the VID and the PID */
+    	/* discover the VID and the PID, plan to make changeable them in near future */
     	unsigned int ath9u_vid = 0x0cf3;
     	unsigned int ath9u_pid = 0x9271;
 	/* create libusb context and populate the general 802.11 struct */
 	unsigned char ath9u_device_descriptor[ATH9U_DESCRIPTOR_SIZE];
-    	memset(ath9u_device_descriptor, 0x00, ATH9U_DESCRIPTOR_SIZE);
+    	memset(ath9u_device_descriptor, 0x00, sizeof(ath9u_device_descriptor));
+	/* set up the log subsystem as fast as we can */
+	ath9u_data = sys_ath9u_log_init();
+	/* just do a preliminary test */
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "this is just a test!");
 	/* get the ath9u_device */
 	if( libusb_init(NULL) < 0 ){
 		exit(-LIBUSB_INIT_FAIL);
@@ -261,8 +365,10 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
     	global_device_informations.device_product_id = ath9u_pid;
 	ath9u_device = libusb_open_device_with_vid_pid(NULL, ath9u_vid, ath9u_pid);
 	if( ! ( ath9u_device ) ){
-		libusb_exit(NULL);
-		exit(-LIBUSB_VID_PID_FAIL);
+		if( ath9u_temp_state() == 0 ){
+			libusb_exit(NULL);
+			exit(-LIBUSB_VID_PID_FAIL);
+		}
 	}
     	if( libusb_get_string_descriptor_ascii(ath9u_device, 0, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE) < 0 ){
         	libusb_exit(NULL);
@@ -292,6 +398,7 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 
 __attribute__((__section__(".end, \"xaw\", @progbits#"))) __attribute__((destructor())) void end(void){
 	end_dialog(); /* terminate the dialog API */
+	sys_ath9u_log_exit(ath9u_data);
 	libusb_exit(NULL);
 }
 
@@ -324,6 +431,7 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 	}
 
     	int addr = 0x501000;
+    	int err = 0;
 	unsigned char *data = (unsigned char *)malloc(4096);
 	/*
 	usb_control_msg(hif_dev->udev,  usb_sndctrlpipe(hif_dev->udev, 0),  FIRMWARE_DOWNLOAD,
@@ -332,7 +440,7 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 	while(fw_len){
 		size_t data_length = min(4096, fw_len);
 		memcpy(data, fw_data, data_length);
-		int err = libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD, addr >> 8, 0, data, data_length, USB_MSG_TIMEOUT);
+		err = libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD, addr >> 8, 0, data, data_length, USB_MSG_TIMEOUT);
 
 		if( err < 0 ){
 			libusb_exit(NULL);
@@ -382,7 +490,7 @@ void ddv_eject_device(struct libusb_device_handle *ath9u_usb){
 		usb_bulk_msg(udev, usb_sndbulkpipe(udev, bulk_out_ep),
 			     cmd, 31, NULL, 2 * USB_MSG_TIMEOUT);
 	*/
-	libusb_bulk_transfer(ath9u_usb, out_endpoint, ath9u_bulk_cmd, sizeof(ath9u_bulk_cmd), 0, USB_MSG_TIMEOUT);
+	libusb_bulk_transfer(ath9u_usb, out_endpoint, ath9u_bulk_cmd, sizeof(ath9u_bulk_cmd), 0, 2 * USB_MSG_TIMEOUT);
 	free(ath9u_bulk_cmd);
 }
 
@@ -409,14 +517,18 @@ signed int ddv_reboot_device(struct libusb_device_handle *ath9u_device){
 }
 
 long ath9u_get_device_capabilities(void){
-	return( DEV_CAN_TX | DEV_CAN_RX | DEV_CAN_STA_MODE | DEV_CAN_AP_MODE | DEV_CAN_MONITOR_MODE |
-            DEV_CAN_2GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N | DEV_IS_SPECTRAL_COMPATIBLE);
+	return(
+		DEV_CAN_TX | DEV_CAN_RX | DEV_CAN_STA_MODE | DEV_CAN_AP_MODE | DEV_CAN_MONITOR_MODE |
+        	DEV_CAN_2GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N |
+		DEV_IS_SPECTRAL_COMPATIBLE
+	);
 
 }
 
 int main(int argc, char *argv[]){
         /* init the dialog API */
-        //init_dialog(stdin, stdout);
+        init_dialog(stdin, stdout);
+        dialog_menu("ATH9U", NULL, 30, 70, 30, 5, NULL);
 
 
 	return 0;
