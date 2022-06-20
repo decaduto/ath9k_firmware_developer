@@ -212,6 +212,15 @@ struct{
 /* MODEL THE LOG SUBSYSTEM */
 #define ATH9U_LOG(level, message) sys_do_ath9u_log(ath9u_data, level, message)
 
+#define ATH9U_COMPOSED_LOG(...) {	\
+	unsigned char __tmp_buffer[256]; \
+	memset(__tmp_buffer, 0x00, sizeof(__tmp_buffer)); \
+	snprintf(__tmp_buffer, sizeof(__tmp_buffer), __VA_ARGS__);	\
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, __tmp_buffer);		\
+}
+
+/* in 'ATH9U_COMPOSED_LOG' is always a DEBUG message type cause it's nature of information debugging ONLY */
+
 enum ath9u_log_subsys_error{
 	FAILED_INITIALIZATION = 5,
 };
@@ -298,6 +307,7 @@ static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_lev
 	for(int i = 0; i < sizeof(log.ath9u_log_buffer); i++){
 		printf("%c", log.ath9u_mapping_log[i]);
 	}
+	printf("\n");
 	/* refresh the buffer, the message will be located in the memory mapped for a limited time */
 	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
 }
@@ -312,7 +322,7 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 	unsigned char *tmp_var = (unsigned char *)malloc(8);
 	unsigned char * firmware_offset_start = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_start;
 	unsigned char * firmware_offset_end   = (unsigned char *)&_binary_ath9u_fw_htc_9271_fw_end;
-        snprintf(tmp_var, 8, "%d", (firmware_offset_end - firmware_offset_start));
+        snprintf(tmp_var, sizeof(tmp_var), "%d", (firmware_offset_end - firmware_offset_start));
         int firmware_size = atoi(tmp_var);
 
 	printf("ath9k firmware offset start: 0x%x firmware offset end: 0x%x firmware size: %d\n",
@@ -321,8 +331,11 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 		firmware_size
 	);
 	free(tmp_var);
-	unsigned char *ath9u_mmap = mmap(NULL, firmware_size, ( PROT_READ | PROT_WRITE ), ( MAP_PRIVATE | MAP_ANON ), -1, 0);
+	/* update the 'global_address' structure */
+	uint32_t *ath9u_mmap = mmap(NULL, firmware_size, ( PROT_READ | PROT_WRITE ), ( MAP_PRIVATE | MAP_ANON ), -1, 0);
 	memcpy(ath9u_mmap, firmware_offset_start, firmware_size);
+	global_address.firmware_segment_vaddr = *ath9u_mmap;
+	global_address.firmware_segment_memsz = firmware_size;
 	//for(int i = 0; i < info->dlpi_phnum; i++){
 		//printf("segment start: 0x%x segment end: 0x%x\n", /* segment size: %d segment flag: %d\n", */
 		//	( info->dlpi_addr + info[i].dlpi_phdr->p_vaddr),
@@ -357,7 +370,8 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	/* set up the log subsystem as fast as we can */
 	ath9u_data = sys_ath9u_log_init();
 	/* just do a preliminary test */
-	ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "this is just a test!");
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "initialization of the log subsystem, say Hi to the world!");
+
 	/* get the ath9u_device */
 	if( libusb_init(NULL) < 0 ){
 		exit(-LIBUSB_INIT_FAIL);
@@ -369,13 +383,13 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	if( ! ( ath9u_device ) ){
 		if( ath9u_temp_state() == 0 ){
 			libusb_exit(NULL);
-            ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "VID/PID usb device has not been found!");
+            		ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "VID/PID usb device has not been found!");
 			exit(-LIBUSB_VID_PID_FAIL);
 		}
 	}
     	if( libusb_get_string_descriptor_ascii(ath9u_device, 0, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE) < 0 ){
         	libusb_exit(NULL);
-            ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "USB device descriptor has not been found!");
+            	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "USB device descriptor has not been found!");
         	exit(-LIBUSB_DESCRIPTOR_FAIL);
     	}
     	if( ! ( ath9u_device_descriptor ) ){
@@ -398,19 +412,25 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
     	libusb_free_bos_descriptor(ath9u_configuration_descriptor);
 	/* discover the endpoint, which will be used for every USB bulk/interrupt/control exchange */
 	out_endpoint = 0x1;
+	/* dump some important informations gathered before in the initialization phase */
+	ATH9U_COMPOSED_LOG("starting memory of the firmware in address space is: 0x%x", global_address.firmware_segment_vaddr);
+	ATH9U_COMPOSED_LOG("firmware size is: %d", global_address.firmware_segment_memsz);
 }
 
 __attribute__((__section__(".end, \"xaw\", @progbits#"))) __attribute__((destructor())) void end(void){
 	end_dialog(); /* terminate the dialog API */
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DYING, "Shutting down the log subsystem!");
 	sys_ath9u_log_exit(ath9u_data);
 	libusb_exit(NULL);
+	#undef _binary_ath9u_fw_htc_9271_fw_start
+	#undef _binary_ath9u_fw_htc_9271_fw_end
 }
 
 signed int ddv_send_management_frame(struct libusb_device_handle *ath9u_usb_handler, const void *tx_frame){
 	if( ! ( ath9u_usb_handler ) || sizeof(tx_frame) == 0 ){
 		return -1;
 	}
-
+	/* STILL IN TODO */
 	//libusb_bulk_transfer();
 }
 
@@ -431,6 +451,7 @@ signed int ar9271_firmware_transfer(int sent_blocks){
 
 void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *fw_data, size_t fw_len){
 	if( !( ath9u_usb_handler ) || ( sizeof(fw_data) == 0 ) || ( fw_len == 0 ) ){
+		ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Incomplete parameters have been passed!");
 		exit(-NO_CORRECT_PARAMS);
 	}
 
@@ -515,7 +536,7 @@ signed int ddv_reboot_device(struct libusb_device_handle *ath9u_device){
 	#else
     		#define ATH9U_REBOOT_CMD	0xffffffff
 	#endif
-	void *reboot_buf = malloc(sizeof(0xffffffff));
+	void *reboot_buf = (void *)malloc(sizeof(0xffffffff));
     	memcpy(reboot_buf, (void *)ATH9U_REBOOT_CMD, 4);
     	if( libusb_interrupt_transfer(ath9u_device, out_endpoint, reboot_buf, 4, NULL, USB_MSG_TIMEOUT) < 0 ){
         	ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Problem with the device reboot, may be some critical error");
