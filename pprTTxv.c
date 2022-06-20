@@ -293,9 +293,11 @@ static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_lev
 			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[U] %d: %s\n", tm.tm_sec, message);
 			break;
 	}
-	memmove(log.ath9u_mapping_log, log.ath9u_log_buffer, sizeof(log.ath9u_mapping_log));
+	memmove(log.ath9u_mapping_log, log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer));
 	/* do the actual printing */
-	printf("%s", log.ath9u_mapping_log);
+	for(int i = 0; i < sizeof(log.ath9u_log_buffer); i++){
+		printf("%c", log.ath9u_mapping_log[i]);
+	}
 	/* refresh the buffer, the message will be located in the memory mapped for a limited time */
 	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
 }
