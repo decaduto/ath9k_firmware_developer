@@ -58,6 +58,8 @@
 /* this will be very important later, is going to be updated by playing with the section size */
 static int chip_firmware_size = 0;
 static int out_endpoint = 0;
+/* global millisecond counter */
+double mseconds = 0;
 
 extern unsigned char _binary_ath9u_fw_htc_9271_fw_start;
 extern unsigned char _binary_ath9u_fw_htc_9271_fw_end;
@@ -210,6 +212,8 @@ struct{
 };
 
 /* MODEL THE LOG SUBSYSTEM */
+
+#pragma message("starting the compilation of the LOG subsystem")
 #define ATH9U_LOG(level, message) sys_do_ath9u_log(ath9u_data, level, message)
 
 #define ATH9U_COMPOSED_LOG(...) {	\
@@ -265,7 +269,7 @@ static void sys_ath9u_log_exit(struct ath9u_data_log logs){
 	}
 	/* unmap the memory area allocated by the init function */
 	if( !! ( logs.ath9u_mapping_log ) ){
-		munmap(logs.ath9u_mapping_log, 512);
+		munmap(logs.ath9u_mapping_log, MAX_ATH9U_LOG_SIZE);
 	}else{
 		/* do nothing, this may lead to some unsafe and unprevedible behaviours */
 	}
@@ -277,35 +281,57 @@ static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_lev
 	}
 	/* compose the string to put in the buffer */
 	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
-	time_t t = time(NULL);
-	struct tm tm = *localtime(&t); /* not happy at all: everytime we invoke this function, the 'time' function will be called again and again... */
+	struct timeval __start, __end;
+	gettimeofday(&__start, NULL);
 	switch(level){
 		case  ATH9U_LOG_MESSAGE_NORMAL:
-			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[N] %d: %s", tm.tm_sec, message);
+			usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[N] %f: %s", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_DEBUG:
-			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[D] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[D] %f: %s\n", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_WARNING:
-			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[W] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[W] %f: %s\n", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_CRITICAL:
-                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[C] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[C] %f: %s\n", mseconds, message);
                         break;
 		case ATH9U_LOG_MESSAGE_COMPROMISED:
-                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[CC] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[T] %f: %s\n", mseconds, message);
                         break;
 		case ATH9U_LOG_MESSAGE_DYING:
-                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[DY] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+                        snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[Z] %f: %s\n", mseconds, message);
                         break;
 		default:
-			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[U] %d: %s\n", tm.tm_sec, message);
+                        usleep(30);
+			gettimeofday(&__end, NULL);
+			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
+			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[U] %f: %s\n", mseconds, message);
 			break;
 	}
 	memmove(log.ath9u_mapping_log, log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer));
 	/* do the actual printing */
 	for(int i = 0; i < sizeof(log.ath9u_log_buffer); i++){
 		printf("%c", log.ath9u_mapping_log[i]);
+        usleep(1000);
 	}
 	printf("\n");
 	/* refresh the buffer, the message will be located in the memory mapped for a limited time */
@@ -325,11 +351,6 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
         snprintf(tmp_var, sizeof(tmp_var), "%d", (firmware_offset_end - firmware_offset_start));
         int firmware_size = atoi(tmp_var);
 
-	printf("ath9k firmware offset start: 0x%x firmware offset end: 0x%x firmware size: %d\n",
-		firmware_offset_start,
-		firmware_offset_end,
-		firmware_size
-	);
 	free(tmp_var);
 	/* update the 'global_address' structure */
 	uint32_t *ath9u_mmap = mmap(NULL, firmware_size, ( PROT_READ | PROT_WRITE ), ( MAP_PRIVATE | MAP_ANON ), -1, 0);
@@ -344,7 +365,6 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 			info[i].dlpi_phdr->p_flags */
 		//);
 	//}
-
 
 	munmap(ath9u_mmap, firmware_size);
 	return 0;
@@ -370,36 +390,44 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	/* set up the log subsystem as fast as we can */
 	ath9u_data = sys_ath9u_log_init();
 	/* just do a preliminary test */
-	ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "initialization of the log subsystem, say Hi to the world!");
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "Initialization of the log subsystem, say Hi to the world!");
 
 	/* get the ath9u_device */
 	if( libusb_init(NULL) < 0 ){
+        	ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Initialization of libsub failed, quitting right now...");
 		exit(-LIBUSB_INIT_FAIL);
 	}
 	struct libusb_device_handle *ath9u_device = NULL;
     	global_device_informations.device_vendor_id = ath9u_vid;
     	global_device_informations.device_product_id = ath9u_pid;
-	ath9u_device = libusb_open_device_with_vid_pid(NULL, ath9u_vid, ath9u_pid);
+	ath9u_device = libusb_open_device_with_vid_pid(NULL, global_device_informations.device_vendor_id, global_device_informations.device_product_id);
 	if( ! ( ath9u_device ) ){
+	        ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Failed to open the device with VID/PID pair!");
+		/*
 		if( ath9u_temp_state() == 0 ){
 			libusb_exit(NULL);
             		ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "VID/PID usb device has not been found!");
 			exit(-LIBUSB_VID_PID_FAIL);
 		}
+		*/
+	}else{
+               ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "Device has been detected");
 	}
+
     	if( libusb_get_string_descriptor_ascii(ath9u_device, 0, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE) < 0 ){
-        	libusb_exit(NULL);
             	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "USB device descriptor has not been found!");
-        	exit(-LIBUSB_DESCRIPTOR_FAIL);
     	}
-    	if( ! ( ath9u_device_descriptor ) ){
-        	libusb_exit(NULL);
-        	exit(-LIBUSB_DESCRIPTOR_FAIL);
-    	}
-    	memcpy(global_device_informations.device_description, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE);
-    	/* gather additional data on the USB device attached */
+    	if( ath9u_device_descriptor ){
+    		memcpy(global_device_informations.device_description, ath9u_device_descriptor, ATH9U_DESCRIPTOR_SIZE);
+    	}else{
+		memset(global_device_informations.device_description, 0x00, sizeof(global_device_informations.device_description));
+	}
+	/* gather additional data on the USB device attached */
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Analyzing the BOS descriptor");
     	struct libusb_bos_descriptor  *ath9u_configuration_descriptor = (struct libusb_bos_descriptor  *)malloc(sizeof(ath9u_configuration_descriptor));
-    	libusb_get_bos_descriptor(ath9u_device, &ath9u_configuration_descriptor);
+    	if( libusb_get_bos_descriptor(ath9u_device, &ath9u_configuration_descriptor) < 0 ){
+		ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "USB BOS descriptor not found for this hardware!");
+	}else{
     	/*
     	global_device_informations.device_capabilities[0]->bDescriptorType = ath9u_configuration_descriptor-> ;
     	global_device_informations.device_capabilities[0]->bDevCapabilityType = ath9u_configuration_descriptor-> ;
@@ -409,8 +437,9 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
     	*/
 
     	/* use the specific function for freeing, instead of the classic 'free' */
-    	libusb_free_bos_descriptor(ath9u_configuration_descriptor);
-	/* discover the endpoint, which will be used for every USB bulk/interrupt/control exchange */
+    		libusb_free_bos_descriptor(ath9u_configuration_descriptor);
+	}
+	/* discover the endpoint, which will be used for every USB bulk/interrupt/control exchange, in this case is fixed for the AR9271 */
 	out_endpoint = 0x1;
 	/* dump some important informations gathered before in the initialization phase */
 	ATH9U_COMPOSED_LOG("starting memory of the firmware in address space is: 0x%x", global_address.firmware_segment_vaddr);
@@ -545,7 +574,7 @@ signed int ddv_reboot_device(struct libusb_device_handle *ath9u_device){
 	free(reboot_buf);
 }
 
-long ath9u_get_device_capabilities(void){
+long __attribute__((unused)) ath9u_get_device_capabilities(void){
 	return(
 		DEV_CAN_TX | DEV_CAN_RX | DEV_CAN_STA_MODE | DEV_CAN_AP_MODE | DEV_CAN_MONITOR_MODE |
         	DEV_CAN_2GHZ | DEV_CAN_INJECT |  DEV_CAN_SUPPORT_WPA | DEV_CAN_SUPPORT_WPA2 | DEV_IS_80211N |
@@ -556,8 +585,9 @@ long ath9u_get_device_capabilities(void){
 
 int main(int argc, char *argv[]){
         /* init the dialog API */
+	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Initializing the dialog subsystem!");
         init_dialog(stdin, stdout);
-        dialog_menu("ATH9U", NULL, 30, 70, 30, 5, NULL);
+        //dialog_menu("ATH9U", NULL, 30, 70, 30, 5, NULL);
 
 
 	return 0;
