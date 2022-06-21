@@ -69,6 +69,7 @@ void ddv_upload_fw(struct libusb_device_handle *, const void *, size_t);
 signed int ddv_send_management_frame(struct libusb_device_handle *, const void *);
 void ddv_eject_device(struct libusb_device_handle *);
 signed int ddv_reboot_device(struct libusb_device_handle *);
+long ath9u_get_device_capabilities(void);
 
 enum ddv_errors{
 	/* misc related errors */
@@ -139,8 +140,8 @@ static struct ath9u_device_informations{
     	bool           device_support_legacy_dfu; /* this will be discovered by reading its USB descriptor */
 }__thread global_device_informations = {
 	.device_has_modified_fw = false,
-
-
+	.device_bus = DEV_IS_ON_USB,
+	.device_architecture = DEV_IS_XTENSA,
 };
 
 
@@ -401,17 +402,19 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	struct libusb_device_handle *ath9u_device = NULL;
     	global_device_informations.device_vendor_id = ath9u_vid;
     	global_device_informations.device_product_id = ath9u_pid;
+	global_device_informations.device_capabilities = ath9u_get_device_capabilities();
 	ath9u_device = libusb_open_device_with_vid_pid(NULL, global_device_informations.device_vendor_id, global_device_informations.device_product_id);
 	if( ! ( ath9u_device ) ){
 	        ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Failed to open the device with VID/PID pair!");
-		/*
-		if( ath9u_temp_state() == 0 ){
+		if( global_device_informations.device_is_plugged == false ){
 			libusb_exit(NULL);
             		ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "VID/PID usb device has not been found!");
 			exit(-LIBUSB_VID_PID_FAIL);
 		}
-		*/
 	}else{
+		global_device_informations.device_is_on = true;
+		global_device_informations.device_is_supported = true;
+		global_device_informations.device_is_plugged = true;
                ATH9U_LOG(ATH9U_LOG_MESSAGE_NORMAL, "Device has been detected");
 	}
 
@@ -457,6 +460,7 @@ __attribute__((__section__(".end, \"xaw\", @progbits#"))) __attribute__((destruc
 	libusb_exit(NULL);
 	#undef _binary_ath9u_fw_htc_9271_fw_start
 	#undef _binary_ath9u_fw_htc_9271_fw_end
+	#undef min
 }
 
 signed int ddv_send_management_frame(struct libusb_device_handle *ath9u_usb_handler, const void *tx_frame){
