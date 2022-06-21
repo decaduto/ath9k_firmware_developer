@@ -160,9 +160,9 @@ static struct global_address_space_info{
 	.boot_segment_memsz = 0x00,
 	.ath9u_ops_segment_vaddr = 0x00,
 	.ath9u_ops_segment_memsz = 0x00,
-	.compiler_segment_vaddr = 0x00,
+	.compiler_segment_vaddr = 0x00, /* this is for the compiler source, still far from now */
 	.compiler_segment_memsz = 0x00,
-	.source_segment_vaddr = 0x00,
+	.source_segment_vaddr = 0x00, /* this is for the fw source, still far from now */
 	.source_segment_memsz = 0x00,
 	.firmware_segment_vaddr = 0x00,
 	.firmware_segment_memsz = 0x00,
@@ -227,6 +227,7 @@ struct{
 
 enum ath9u_log_subsys_error{
 	FAILED_INITIALIZATION = 5,
+	MALFORMED_MESSAGE,
 };
 
 enum ath9u_log_subsys_level{
@@ -264,7 +265,8 @@ static struct ath9u_data_log sys_ath9u_log_init(void){
 
 static void sys_ath9u_log_exit(struct ath9u_data_log logs){
 	/* check for security if the log buffer is empty or not */
-	if( sizeof(logs.ath9u_log_buffer) != 0 && logs.ath9u_log_buffer[3] != '0' ){
+	int rand_value_to_verify = (int)( rand() % sizeof(logs.ath9u_log_buffer));
+	if( sizeof(logs.ath9u_log_buffer) != 0 && logs.ath9u_log_buffer[rand_value_to_verify] != '0' ){
 		memset(logs.ath9u_log_buffer, 0x00, sizeof(logs.ath9u_log_buffer));
 	}
 	/* unmap the memory area allocated by the init function */
@@ -273,17 +275,20 @@ static void sys_ath9u_log_exit(struct ath9u_data_log logs){
 	}else{
 		/* do nothing, this may lead to some unsafe and unprevedible behaviours */
 	}
+	#undef rand_value_to_verify
 }
 
-static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_level level, unsigned char *message){
+static signed int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_level level, unsigned char *message){
 	if( strlen(message) == 0 ){
 		printf("we have a problem with message!\n");
+		return -MALFORMED_MESSAGE;
 	}
 	/* compose the string to put in the buffer */
 	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
 	struct timeval __start, __end;
 	gettimeofday(&__start, NULL);
 	switch(level){
+		/* add small delay in message processing, every level impose a different delay value */
 		case  ATH9U_LOG_MESSAGE_NORMAL:
 			usleep(30);
 			gettimeofday(&__end, NULL);
@@ -291,37 +296,37 @@ static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_lev
 			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[N] %f: %s", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_DEBUG:
-                        usleep(30);
+                        usleep(10);
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
 			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[D] %f: %s\n", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_WARNING:
-                        usleep(30);
+                        usleep(40);
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
 			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[W] %f: %s\n", mseconds, message);
 			break;
 		case ATH9U_LOG_MESSAGE_CRITICAL:
-                        usleep(30);
+                        usleep(50);
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
                         snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[C] %f: %s\n", mseconds, message);
                         break;
 		case ATH9U_LOG_MESSAGE_COMPROMISED:
-                        usleep(30);
+                        usleep(100);
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
                         snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[T] %f: %s\n", mseconds, message);
                         break;
 		case ATH9U_LOG_MESSAGE_DYING:
-                        usleep(30);
+                        usleep(5);
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
                         snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[Z] %f: %s\n", mseconds, message);
                         break;
 		default:
-                        usleep(30);
+                        usleep(10); /* not defined */
 			gettimeofday(&__end, NULL);
 			mseconds += (double)(__end.tv_usec - __start.tv_usec) / 1000000 + (double)(__end.tv_sec - __start.tv_sec);
 			snprintf(log.ath9u_log_buffer, sizeof(log.ath9u_log_buffer), "[U] %f: %s\n", mseconds, message);
@@ -331,13 +336,12 @@ static int sys_do_ath9u_log(struct ath9u_data_log log, enum ath9u_log_subsys_lev
 	/* do the actual printing */
 	for(int i = 0; i < sizeof(log.ath9u_log_buffer); i++){
 		printf("%c", log.ath9u_mapping_log[i]);
-        usleep(1000);
+        	usleep(1000); /* add a small delay while displaying characters on the screen */
 	}
 	printf("\n");
 	/* refresh the buffer, the message will be located in the memory mapped for a limited time */
 	memset(log.ath9u_log_buffer, 0x00, sizeof(log.ath9u_log_buffer));
 }
-
 
 /* END OF THE LOG SUBSYSTEM */
 
@@ -365,8 +369,6 @@ __attribute__((optimize("O0"))) int ath9u_discover_address_space(struct dl_phdr_
 			info[i].dlpi_phdr->p_flags */
 		//);
 	//}
-
-	munmap(ath9u_mmap, firmware_size);
 	return 0;
 }
 
@@ -379,7 +381,6 @@ signed int ath9u_temp_state(void){
 __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constructor(101))) void init(void){
 	/* start the discover function, which will populate the 'global_address_space_info' struct with the appropriate addresses */
 	dl_iterate_phdr(ath9u_discover_address_space, NULL);
-
 
     	/* discover the VID and the PID, plan to make changeable them in near future */
     	unsigned int ath9u_vid = 0x0cf3;
@@ -425,9 +426,10 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 	/* gather additional data on the USB device attached */
 	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Analyzing the BOS descriptor");
     	struct libusb_bos_descriptor  *ath9u_configuration_descriptor = (struct libusb_bos_descriptor  *)malloc(sizeof(ath9u_configuration_descriptor));
-    	if( libusb_get_bos_descriptor(ath9u_device, &ath9u_configuration_descriptor) < 0 ){
-		ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "USB BOS descriptor not found for this hardware!");
-	}else{
+	if( ath9u_device ){
+    		if( libusb_get_bos_descriptor(ath9u_device, &ath9u_configuration_descriptor) < 0 ){
+			ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "USB BOS descriptor not found for this hardware!");
+		}else{
     	/*
     	global_device_informations.device_capabilities[0]->bDescriptorType = ath9u_configuration_descriptor-> ;
     	global_device_informations.device_capabilities[0]->bDevCapabilityType = ath9u_configuration_descriptor-> ;
@@ -437,7 +439,8 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
     	*/
 
     	/* use the specific function for freeing, instead of the classic 'free' */
-    		libusb_free_bos_descriptor(ath9u_configuration_descriptor);
+    			libusb_free_bos_descriptor(ath9u_configuration_descriptor);
+		}
 	}
 	/* discover the endpoint, which will be used for every USB bulk/interrupt/control exchange, in this case is fixed for the AR9271 */
 	out_endpoint = 0x1;
@@ -449,6 +452,7 @@ __attribute__((__section__(".boot, \"xaw\", @progbits#"))) __attribute__((constr
 __attribute__((__section__(".end, \"xaw\", @progbits#"))) __attribute__((destructor())) void end(void){
 	end_dialog(); /* terminate the dialog API */
 	ATH9U_LOG(ATH9U_LOG_MESSAGE_DYING, "Shutting down the log subsystem!");
+	usleep(300);
 	sys_ath9u_log_exit(ath9u_data);
 	libusb_exit(NULL);
 	#undef _binary_ath9u_fw_htc_9271_fw_start
@@ -487,6 +491,7 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
     	int addr = 0x501000;
     	int err = 0;
 	unsigned char *data = (unsigned char *)malloc(4096);
+	int fw_len_copy = fw_len;
 	/*
 	usb_control_msg(hif_dev->udev,  usb_sndctrlpipe(hif_dev->udev, 0),  FIRMWARE_DOWNLOAD,
 		(0x40 | USB_DIR_OUT), addr >> 8, 0, buf, transfer,  USB_MSG_TIMEOUT);
@@ -496,6 +501,7 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 		size_t data_length = min(4096, fw_len);
 		memcpy(data, fw_data, data_length);
 		err = libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD, addr >> 8, 0, data, data_length, USB_MSG_TIMEOUT);
+		ATH9U_COMPOSED_LOG("Sending current firmware data: 0x%x", data);
 		if( err < 0 ){
 			libusb_exit(NULL);
 			ATH9U_LOG(ATH9U_LOG_MESSAGE_CRITICAL, "Problem with the firmware transfer, this may be critical");
@@ -519,6 +525,8 @@ void ddv_upload_fw(struct libusb_device_handle *ath9u_usb_handler, const void *f
 		#define AR9271_FIRMWARE_TEXT  0x903000
 	#endif
 	ATH9U_LOG(ATH9U_LOG_MESSAGE_DEBUG, "Sending the USB control message for ending the firmware exchange");
+	ATH9U_COMPOSED_LOG("total firmware data patched: %d", fw_len_copy);
+	#undef fw_len_copy
 	libusb_control_transfer(ath9u_usb_handler, 0x40 | USB_DIR_OUT, FIRMWARE_DOWNLOAD_COMP, AR9271_FIRMWARE_TEXT >> 8, 0, NULL, 0, USB_MSG_TIMEOUT);
 }
 
